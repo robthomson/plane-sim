@@ -1,0 +1,325 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Deploy & Launch [SIM]",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "sensors"
+      ],
+      "options": {
+        "env": {
+          "RFSUITE_LANG": "${config:planesim.deploy.language}"
+        }
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "PlaneSim: Set Deployment Language",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        ".vscode/set-language.js",
+        "${input:deployLanguage}"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Deploy Radio",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--radio",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "i18n",
+        "--step",
+        "soundpack",
+        "--step",
+        "sensors"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Deploy Radio [Fast]",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--fileext",
+        "fast",
+        "--radio",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "i18n",
+        "--step",
+        "soundpack"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Deploy Radio + Serial Debug",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--radio",
+        "--radio-debug",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "i18n",
+        "--step",
+        "soundpack"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Deploy Radio + Serial Debug [Fast]",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--fileext",
+        "fast",
+        "--radio",
+        "--radio-debug",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "i18n",
+        "--step",
+        "soundpack"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Radio: Serial Debug",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--radio",
+        "--connect-only",
+        "--lang",
+        "${config:planesim.deploy.language}",
+        "--step",
+        "i18n",
+        "--step",
+        "soundpack"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Clear locks",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/deploy.py",
+        "--clear-lock"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Debug Radio Connection",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/debug_connection.py"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Debug Radio Connection: Switch To Serial",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/debug_connection.py",
+        "--switch",
+        "start"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "Debug Radio Connection: Switch To Storage",
+      "type": "shell",
+      "command": "python",
+      "osx": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "windows": {
+        "command": "${command:python.interpreterPath}"
+      },
+      "args": [
+        "${workspaceFolder}/.vscode/scripts/debug_connection.py",
+        "--switch",
+        "stop"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ethos.Start",
+      "type": "process",
+      "command": "${command:ethos.start}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ethos.SetSimulator",
+      "type": "process",
+      "command": "${command:ethos.setSimulator}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ethos.StartChain",
+      "dependsOn": [
+        "ethos.SetSimulator",
+        "ethos.Start"
+      ],
+      "dependsOrder": "sequence"
+    },
+    {
+      "label": "ethos.OpenControls",
+      "type": "process",
+      "command": "${command:ethos.openControls}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    },
+    {
+      "label": "ethos.OpenTelemetry",
+      "type": "process",
+      "command": "${command:ethos.openTelemetry}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      }
+    }
+  ]
+}

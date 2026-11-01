@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'release/*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    name: Build release ZIP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set build variables
+        id: buildvars
+        shell: bash
+        run: |
+          GIT_TAG="${GITHUB_REF_NAME}"
+          GIT_VER="${GIT_TAG#release/}"
+          echo "GIT_VER=$GIT_VER" >> $GITHUB_ENV
+          echo "GIT_TAG=$GIT_TAG" >> $GITHUB_ENV
+
+      - name: Stage scripts
+        shell: bash
+        run: |
+          STAGE="build/scripts/planesim"
+          mkdir -p "$STAGE"
+          rsync -a src/planesim/ "$STAGE"/
+          echo "STAGE=$STAGE" >> $GITHUB_ENV
+
+      - name: Create release ZIP
+        shell: bash
+        run: |
+          ART="planesim-${{ env.GIT_VER }}.zip"
+          (cd build && zip -q -r -9 "../$ART" scripts)
+          echo "ARTIFACT=$ART" >> $GITHUB_ENV
+
+      - name: Create release notes
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build notes
+        shell: bash
+        run: |
+          python .github/scripts/extract-release-notes.py "${{ env.GIT_VER }}" Releases.md > Notes.md
+          sed -n '1,200p' Notes.md
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release create "${{ env.GIT_TAG }}" \
+            --notes-file Notes.md \
+            --title "PlaneSim - Release ${{ env.GIT_VER }}" \
+            "${{ env.ARTIFACT }}"

@@ -1,0 +1,41 @@
+name: PR
+
+on:
+  pull_request:
+
+jobs:
+  build-zip:
+    name: Build PR ZIP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set build variables
+        id: buildvars
+        shell: bash
+        run: |
+          SHORT_SHA="$(git rev-parse --short HEAD)"
+          echo "GIT_VER=pr-${{ github.event.pull_request.number }}-${SHORT_SHA}" >> $GITHUB_ENV
+
+      - name: Stage scripts
+        shell: bash
+        run: |
+          STAGE="build/scripts/planesim"
+          mkdir -p "$STAGE"
+          rsync -a src/planesim/ "$STAGE"/
+          echo "STAGE=$STAGE" >> $GITHUB_ENV
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          ART="planesim-${{ env.GIT_VER }}.zip"
+          (cd build && zip -q -r -9 "../$ART" scripts)
+          echo "ARTIFACT=$ART" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: planesim-${{ env.GIT_VER }}
+          path: ${{ env.ARTIFACT }}
+          if-no-files-found: error
