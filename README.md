@@ -2,6 +2,14 @@
 
 A 3D RC aeroplane flight simulator for FrSky Ethos radios, flown with the radio's own sticks.
 
+| On the runway | Climb-out |
+| --- | --- |
+| ![On the runway](.github/gfx/runway.png) | ![Climb-out](.github/gfx/climb.png) |
+| **Low pass** | **Banked pass** |
+| ![Low pass](.github/gfx/lowpass.png) | ![Banked pass](.github/gfx/bank.png) |
+
+*Screenshots from the Ethos simulator (X20S).*
+
 You stand at the edge of a flying field with a runway in front, and the view turns to follow the plane, as when flying a real one. The model is the low-poly Extra-style aerobatic plane from wingflight-lua-ethos-suite (`app/plane3d.lua`, a copy of the Wingflight Configurator's model), at a 2 m span. Its ailerons, elevator and rudder move with the sticks, and the prop blurs into a disc under power. The wings and tailplane are white underneath, so upright and inverted are easy to tell apart. A shadow on the ground shows height.
 
 The sim is built the same way as [heli-sim](https://github.com/robthomson/heli-sim): same renderer, tooling and performance approach.
