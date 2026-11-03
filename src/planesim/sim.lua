@@ -38,9 +38,10 @@ local DEFAULTS = {
   expo = 30,          -- percent
   response = 3,       -- index into RESPONSES
   autoZoom = true,
+  detail = 1,         -- 1 low (flat backdrop, simple model), 2 high
   stats = false,
 }
-local SAVE_ORDER = {"level", "rollRate", "pitchRate", "yawRate", "expo", "response", "autoZoom", "stats"}
+local SAVE_ORDER = {"level", "rollRate", "pitchRate", "yawRate", "expo", "response", "autoZoom", "detail", "stats"}
 
 ---------------------------------------------------------------------------
 -- Helpers
@@ -101,6 +102,7 @@ local function loadConfig()
   cfg.yawRate = clamp(floor(cfg.yawRate), 30, 1000)
   cfg.expo = clamp(floor(cfg.expo), 0, 90)
   if not RESPONSES[cfg.response] then cfg.response = DEFAULTS.response end
+  if cfg.detail ~= 2 then cfg.detail = 1 end
   return cfg
 end
 
@@ -247,6 +249,13 @@ local function openSettings(state)
   for i = 1, #RESPONSES do responseChoices[i] = {RESPONSE_NAMES[i], i} end
   form.addChoiceField(form.addLine("Response"), nil, responseChoices,
     function() return cfg.response end, function(v) set("response", v) end)
+  -- Low detail is for the radio, where the screen fills set the frame rate.
+  form.addChoiceField(form.addLine("Detail"), nil, {{"Low", 1}, {"High", 2}},
+    function() return cfg.detail end,
+    function(v)
+      set("detail", v)
+      render.setDetail(v)
+    end)
   if form.addBooleanField then
     form.addBooleanField(form.addLine("Auto zoom"), nil,
       function() return cfg.autoZoom end, function(v) set("autoZoom", v) end)
@@ -285,6 +294,7 @@ function sim.create()
   plane.build()
   physics.setGeometry(plane)
   render.init(plane)
+  render.setDetail(state.cfg.detail)
   physics.reset(state.h, render.START_X, render.START_Y, render.START_HEADING)
   return state
 end

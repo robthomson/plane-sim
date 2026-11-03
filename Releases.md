@@ -1,3 +1,7 @@
+# 1.1.0
+
+- New **Detail** setting, default **Low**, for a higher frame rate on the radio: flat hills and tree line, no mown strip, one-triangle trees, a two-triangle shadow and the low detail model until the plane is close. **High** is the previous look.
+
 # 1.0.0
 
 - Initial release of PlaneSim.
