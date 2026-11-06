@@ -20,7 +20,7 @@
 -- yaw > 0 turns towards east; pitch > 0 looks up. The camera never rolls,
 -- so the horizon is always a level line.
 
-local sin, cos, tan, atan = math.sin, math.cos, math.tan, math.atan
+local sin, cos, tan, atan, exp = math.sin, math.cos, math.tan, math.atan, math.exp
 local sqrt, floor, min, max, abs = math.sqrt, math.floor, math.min, math.max, math.abs
 local rad, pi = math.rad, math.pi
 local t_sort = table.sort
@@ -612,9 +612,8 @@ function render.init(mesh)
   end
 end
 
--- Point the camera at the plane. zoomTarget is the wanted zoom; dt
--- smooths the motion.
-function render.track(h, autoZoom, manualZoom, dt)
+-- Where the camera wants to look: the model's direction, and the zoom.
+local function targets(h, autoZoom, manualZoom)
   local dx, dy, dz = h.px - EYE_X, h.py - EYE_Y, h.pz + 0.1 - EYE_Z
   local dh = sqrt(dx * dx + dy * dy)
   local yawT = atan(dx, dy)
@@ -627,21 +626,48 @@ function render.track(h, autoZoom, manualZoom, dt)
     pitchT = max(min(pitchT, halfV * 0.8), pitchT - halfV * 0.35)
   end
   if pitchT > PITCH_MAX then pitchT = PITCH_MAX elseif pitchT < PITCH_MIN then pitchT = PITCH_MIN end
-  local dyaw = yawT - camYaw
-  if dyaw > pi then dyaw = dyaw - 2 * pi elseif dyaw < -pi then dyaw = dyaw + 2 * pi end
-  local k = min(1, dt * 10)
-  camYaw = camYaw + dyaw * k
-  if camYaw > pi then camYaw = camYaw - 2 * pi elseif camYaw < -pi then camYaw = camYaw + 2 * pi end
-  camPitch = camPitch + (pitchT - camPitch) * k
   local dist = sqrt(dh * dh + dz * dz)
   local zt = manualZoom or 1
   if autoZoom then zt = zt * min(3, max(1, dist / 20)) end
-  zoom = zoom + (zt - zoom) * min(1, dt * 3)
+  return yawT, pitchT, zt
 end
 
--- Snap the camera to the plane (after a reset).
+local function wrapPi(a)
+  if a > pi then return a - 2 * pi elseif a < -pi then return a + 2 * pi end
+  return a
+end
+
+-- The camera follows its targets with a first-order lag (rate in 1/s),
+-- computed exactly for a target that moved evenly from t0 to t1 during the
+-- frame: the lag behind a steadily moving model is then the same whatever
+-- the frame time. With the plain y += (t1 - y) * dt * rate step it grew and
+-- shrank with every frame, and the model and the scenery jittered on
+-- screen in fast passes.
+local CAM_RATE, ZOOM_RATE = 20, 3
+local lastYawT, lastPitchT, lastZoomT
+
+local function follow(y, t0, t1, rate, dt)
+  local lag = (t1 - t0) / (rate * dt)
+  return t1 - lag + (y - t0 + lag) * exp(-rate * dt)
+end
+
+-- Point the camera at the model; dt is the time since the last call.
+function render.track(h, autoZoom, manualZoom, dt)
+  local yawT, pitchT, zt = targets(h, autoZoom, manualZoom)
+  if dt > 0 and lastYawT then
+    -- Yaw relative to the last target, so the wrap at +-pi does no harm.
+    camYaw = wrapPi(lastYawT + follow(wrapPi(camYaw - lastYawT), 0, wrapPi(yawT - lastYawT), CAM_RATE, dt))
+    camPitch = follow(camPitch, lastPitchT, pitchT, CAM_RATE, dt)
+    zoom = follow(zoom, lastZoomT, zt, ZOOM_RATE, dt)
+  end
+  lastYawT, lastPitchT, lastZoomT = yawT, pitchT, zt
+end
+
+-- Snap the camera to the model (after a reset).
 function render.snap(h, autoZoom, manualZoom)
-  render.track(h, autoZoom, manualZoom, 10)
+  local yawT, pitchT, zt = targets(h, autoZoom, manualZoom)
+  camYaw, camPitch, zoom = yawT, pitchT, zt
+  lastYawT, lastPitchT, lastZoomT = yawT, pitchT, zt
 end
 
 -- What the last frame was built from: when nothing has moved (the
