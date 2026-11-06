@@ -386,11 +386,13 @@ function sim.wakeup(state)
   if state.phase ~= "crashed" then
     state.acc = state.acc + dt
     local n = 0
-    while state.acc >= STEP and n < MAX_STEPS do
-      physics.step(h, inp, STEP)
-      state.acc = state.acc - STEP
+    local acc = state.acc
+    while acc >= STEP and n < MAX_STEPS do
+      acc = acc - STEP
       n = n + 1
     end
+    state.acc = acc
+    physics.run(h, inp, STEP, n)
     if not h.landed then state.flightTime = state.flightTime + dt end
     local d2 = h.px * h.px + h.py * h.py
     if d2 > RANGE_LIMIT * RANGE_LIMIT then
