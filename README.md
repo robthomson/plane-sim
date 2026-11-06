@@ -16,6 +16,8 @@ The sim is built the same way as [heli-sim](https://github.com/robthomson/heli-s
 
 ## Flying
 
+PlaneSim runs on the whole screen, without the title bar. The flight data, flight mode and flight time sit on a black bar at the top.
+
 - The plane starts at the west end of the runway, pointing east (to the right). Lower the throttle to arm the motor.
 - Throttle up to roll. The tail comes up with speed, and up elevator holds it down. The rudder steers on the ground. The plane lifts off at about 15 m/s.
 - **Rate** (default): the sticks set roll, pitch and yaw rates, like a stabilised receiver in rate mode. Control authority fades as the airspeed drops, but prop wash keeps the elevator and rudder working, so the plane can hover on the prop.
@@ -58,12 +60,12 @@ The rates are at full airspeed; they shrink when the plane is slow. Stick source
 
 ## Performance
 
-Ethos aborts a `paint` that runs about 20000 Lua instructions; `wakeup` is not held to that budget (measured in the Ethos simulator). So `wakeup` does all the work into flat display lists and `paint` only replays them, using 10–15% of its budget. When the plane is small on screen, the canopy, spinner, gear and prop are left out. Beyond 25 m one scale serves the whole model. When nothing has moved, the frame is not rebuilt or repainted.
+Ethos aborts a `paint` that runs about 20000 Lua instructions; `wakeup` is not held to that budget (measured in the Ethos simulator). So `wakeup` does all the work into flat display lists and `paint` only replays them, using 10–15% of its budget. When the plane is small on screen, the canopy, spinner, gear and prop are left out. Beyond 15 m one scale serves the whole model (the perspective inside it would move its outline by 1-2 px). When nothing has moved, the frame is not rebuilt or repainted. A new frame invalidates rectangles only: a plain `lcd.invalidate()` makes Ethos clear the window first. The HUD text sits on opaque bars outside the scene, so it is drawn without a shadow and only every other frame; in between only the scene's rectangle is invalidated and Ethos keeps the bars. The hot loops keep their display lists in locals (indexing an upvalue costs an extra VM instruction per access). The plane is drawn where it is at the moment of the frame (the time not yet stepped is carried forward), so fast passes do not stutter.
 
-On a radio the frame rate is set by the `lcd` fills, not by Lua, so the **Detail** setting trades scenery for speed:
+On a radio both the Lua work and the `lcd` fills cost frame time, and the **Detail** setting trades scenery for speed:
 
-- **Low** (default): the hills and tree line are flat bands, there is no mown strip under the runway, each tree is one triangle, the shadow is two, and the low detail model is used until the plane is close.
-- **High**: hill and tree line silhouettes, the mown strip, two-tier trees, a cross-shaped shadow and the full model from about 20 m.
+- **Low** (default): the hills and tree line are flat bands, there is no mown strip under the runway (nor its edge lines), the shadow is two triangles, and the low detail model is used until the plane is close.
+- **High**: hill and tree line silhouettes, the mown strip, a cross-shaped shadow and the full model from about 20 m.
 
 ## VS Code deploy
 

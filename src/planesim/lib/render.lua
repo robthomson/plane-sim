@@ -10,10 +10,11 @@
 -- 5000. No tables are allocated per frame.
 --
 -- Two detail levels (render.setDetail). Low, the default, is for the
--- radio, where the lcd fills set the frame rate: the hills and tree line
--- are flat bands, there is no mown strip, a tree is one triangle, the
--- shadow two, and the low detail model is used unless the aircraft is
--- close. High draws the silhouettes, the strip and the rest.
+-- radio: the hills and tree line are flat bands, there is no mown strip
+-- (nor its edge lines), the shadow is two triangles, and the low detail
+-- model is used unless the aircraft is close. High draws the silhouettes,
+-- the strip and the rest.
+-- Trees are the same at both: a rectangle trunk and a circle crown.
 --
 -- World axes: X east, Y north, Z up (metres). Camera yaw 0 looks north,
 -- yaw > 0 turns towards east; pitch > 0 looks up. The camera never rolls,
@@ -87,7 +88,7 @@ local function buildColors()
   C.line = lcd.RGB(214, 230, 196)
   C.shadow = lcd.RGB(0, 0, 0, 0.35)
   C.trunk = lcd.RGB(92, 70, 50)
-  C.pine = {lcd.RGB(34, 82, 44), lcd.RGB(44, 96, 50), lcd.RGB(28, 70, 40)}
+  C.crown = {lcd.RGB(34, 82, 44), lcd.RGB(44, 96, 50), lcd.RGB(28, 70, 40)}
 
   local function bandList(E, cols)
     local R = {}
@@ -156,16 +157,22 @@ local cRx, cRy                       -- right (z = 0)
 local cUx, cUy, cUz                  -- up
 local cFx, cFy, cFz                  -- forward
 local scrW, scrH, cx, cy, focal = 800, 480, 400, 240, 571
+local scrTop = 0                     -- the scene's top row (below the HUD bar)
 local kx, ky = 1, 1                  -- frustum slopes (with margin)
 
 -- Bands: full-width rectangles.
 local BY, BH, BCOL = {}, {}, {}
 local bandCount = 0
 
--- Triangles: ground layer, then trees behind the plane, then trees in
--- front of it.
+-- Triangles: the ground layer.
 local TX1, TY1, TX2, TY2, TX3, TY3, TCOL = {}, {}, {}, {}, {}, {}, {}
-local triCount, triGround, triFar = 0, 0, 0
+local triCount = 0
+
+-- Trees, far to near: trunk rectangles and crown circles. The first
+-- treeFar are behind the plane, the rest in front of it.
+local KX, KY, KW, KH = {}, {}, {}, {}
+local RX, RY, RR, RCOL = {}, {}, {}, {}
+local treeCount, treeFar = 0, 0
 
 -- Lines (field markings), drawn over the ground layer.
 local LX1, LY1, LX2, LY2, LCOL = {}, {}, {}, {}, {}
@@ -183,15 +190,6 @@ local function tri(x1, y1, x2, y2, x3, y3, col)
   local n = triCount + 1
   triCount = n
   TX1[n], TY1[n], TX2[n], TY2[n], TX3[n], TY3[n], TCOL[n] = x1, y1, x2, y2, x3, y3, col
-end
-
-local function band(y0, y1, col)
-  if y1 <= 0 or y0 >= scrH or y1 <= y0 then return end
-  if y0 < 0 then y0 = 0 end
-  if y1 > scrH then y1 = scrH end
-  local n = bandCount + 1
-  bandCount = n
-  BY[n], BH[n], BCOL[n] = floor(y0), floor(y1) - floor(y0) + 1, col
 end
 
 -- Camera coordinates of a world point.
@@ -227,28 +225,43 @@ local function clipPlane(n, a, b, c, d, sx, sy, sz, dx, dy, dz)
   return m
 end
 
+-- Fan a projected convex polygon (camera coordinates in X, Y, Z) into the
+-- triangle list. Written out rather than calling tri(): on the radio a Lua
+-- call costs about as much as ten instructions.
+local function fan(n, X, Y, Z, col)
+  local f, ccx, ccy = focal, cx, cy
+  local X1, Y1, X2, Y2, X3, Y3, CO = TX1, TY1, TX2, TY2, TX3, TY3, TCOL
+  local t = triCount
+  local x0, y0 = ccx + X[1] * f / Z[1], ccy - Y[1] * f / Z[1]
+  local xp, yp = ccx + X[2] * f / Z[2], ccy - Y[2] * f / Z[2]
+  for i = 3, n do
+    local z = Z[i]
+    local xi, yi = ccx + X[i] * f / z, ccy - Y[i] * f / z
+    t = t + 1
+    X1[t], Y1[t], X2[t], Y2[t], X3[t], Y3[t], CO[t] = x0, y0, xp, yp, xi, yi, col
+    xp, yp = xi, yi
+  end
+  triCount = t
+end
+
 local function polygon(n, col)
   -- Outcodes: skip a polygon wholly outside one side of the view, project
   -- one wholly inside as it is, clip the rest.
   local any, all = 0, 31
+  local kx_, ky_ = kx, ky
+  local X, Y, Z = PX, PY, PZ
   for i = 1, n do
-    local x, y, z = PX[i], PY[i], PZ[i]
+    local x, y, z = X[i], Y[i], Z[i]
     local code = 0
     if z < NEAR then code = 1 end
-    if x > kx * z then code = code | 2 elseif -x > kx * z then code = code | 4 end
-    if y > ky * z then code = code | 8 elseif -y > ky * z then code = code | 16 end
+    local zx, zy = kx_ * z, ky_ * z
+    if x > zx then code = code | 2 elseif -x > zx then code = code | 4 end
+    if y > zy then code = code | 8 elseif -y > zy then code = code | 16 end
     any, all = any | code, all & code
   end
   if all ~= 0 then return end
   if any == 0 then
-    local f = focal
-    local x0, y0 = cx + PX[1] * f / PZ[1], cy - PY[1] * f / PZ[1]
-    local xp, yp = cx + PX[2] * f / PZ[2], cy - PY[2] * f / PZ[2]
-    for i = 3, n do
-      local xi, yi = cx + PX[i] * f / PZ[i], cy - PY[i] * f / PZ[i]
-      tri(x0, y0, xp, yp, xi, yi, col)
-      xp, yp = xi, yi
-    end
+    fan(n, PX, PY, PZ, col)
     return
   end
   n = clipPlane(n, 0, 0, 1, -NEAR, PX, PY, PZ, QX, QY, QZ)
@@ -257,14 +270,7 @@ local function polygon(n, col)
   n = clipPlane(n, 0, -1, ky, 0, QX, QY, QZ, PX, PY, PZ)
   n = clipPlane(n, 0, 1, ky, 0, PX, PY, PZ, QX, QY, QZ)
   if n < 3 then return end
-  local f = focal
-  local x0, y0 = cx + QX[1] * f / QZ[1], cy - QY[1] * f / QZ[1]
-  local xp, yp = cx + QX[2] * f / QZ[2], cy - QY[2] * f / QZ[2]
-  for i = 3, n do
-    local xi, yi = cx + QX[i] * f / QZ[i], cy - QY[i] * f / QZ[i]
-    tri(x0, y0, xp, yp, xi, yi, col)
-    xp, yp = xi, yi
-  end
+  fan(n, QX, QY, QZ, col)
 end
 
 local function groundQuad(x0, y0, x1, y1, col)
@@ -275,12 +281,32 @@ local function groundQuad(x0, y0, x1, y1, col)
   polygon(4, col)
 end
 
--- A flat ellipse on the ground: centre, half axes along a unit direction.
-local function groundEllipse(gx, gy, ux, uy, ra, rb, n, col)
+-- Unit circles for the ground ellipses, by point count.
+local CIRCLE = {}
+for _, n in ipairs({4, 6, 8}) do
+  local C, S = {}, {}
   for k = 1, n do
     local a = (k - 1) * 2 * pi / n
-    local ca, sa = cos(a) * ra, sin(a) * rb
-    PX[k], PY[k], PZ[k] = toCam(gx + ux * ca - uy * sa, gy + uy * ca + ux * sa, 0)
+    C[k], S[k] = cos(a), sin(a)
+  end
+  CIRCLE[n] = {C = C, S = S}
+end
+
+-- A flat ellipse on the ground: centre, half axes along a unit direction.
+-- The camera transform is written out (z = 0 for every point).
+local function groundEllipse(gx, gy, ux, uy, ra, rb, n, col)
+  local U = CIRCLE[n]
+  local UC, US = U.C, U.S
+  local rx, ry, upx, upy, fwx, fwy = cRx, cRy, cUx, cUy, cFx, cFy
+  local ox, oy = gx - EYE_X, gy - EYE_Y
+  local uz0, fz0 = -EYE_Z * cUz, -EYE_Z * cFz
+  local X, Y, Z = PX, PY, PZ
+  for k = 1, n do
+    local ca, sa = UC[k] * ra, US[k] * rb
+    local dx, dy = ox + ux * ca - uy * sa, oy + uy * ca + ux * sa
+    X[k] = dx * rx + dy * ry
+    Y[k] = dx * upx + dy * upy + uz0
+    Z[k] = dx * fwx + dy * fwy + fz0
   end
   polygon(n, col)
 end
@@ -296,8 +322,25 @@ end
 
 -- A world line, clipped to the near plane and the sides of the view.
 local function line(x0, y0, z0, x1, y1, z1, col)
-  local ax, ay, az = toCam(x0, y0, z0)
-  local bx, by, bz = toCam(x1, y1, z1)
+  local rx, ry, upx, upy, upz, fwx, fwy, fwz = cRx, cRy, cUx, cUy, cUz, cFx, cFy, cFz
+  local dx, dy, dz = x0 - EYE_X, y0 - EYE_Y, z0 - EYE_Z
+  local ax, ay, az = dx * rx + dy * ry, dx * upx + dy * upy + dz * upz, dx * fwx + dy * fwy + dz * fwz
+  dx, dy, dz = x1 - EYE_X, y1 - EYE_Y, z1 - EYE_Z
+  local bx, by, bz = dx * rx + dy * ry, dx * upx + dy * upy + dz * upz, dx * fwx + dy * fwy + dz * fwz
+  -- Both ends inside the view: no clipping.
+  if az >= NEAR and bz >= NEAR then
+    local kxa, kxb, kya, kyb = kx * az, kx * bz, ky * az, ky * bz
+    if ax <= kxa and -ax <= kxa and bx <= kxb and -bx <= kxb
+      and ay <= kya and -ay <= kya and by <= kyb and -by <= kyb then
+      local n = lineCount + 1
+      lineCount = n
+      local f = focal
+      LX1[n], LY1[n] = cx + ax * f / az, cy - ay * f / az
+      LX2[n], LY2[n] = cx + bx * f / bz, cy - by * f / bz
+      LCOL[n] = col
+      return
+    end
+  end
   local t0, t1 = clipT(az - NEAR, bz - NEAR, 0, 1)
   if t0 then t0, t1 = clipT(kx * az - ax, kx * bz - bx, t0, t1) end
   if t0 then t0, t1 = clipT(kx * az + ax, kx * bz + bx, t0, t1) end
@@ -312,14 +355,6 @@ local function line(x0, y0, z0, x1, y1, z1, col)
   LX1[n], LY1[n] = cx + px * focal / pz, cy - py * focal / pz
   LX2[n], LY2[n] = cx + qx * focal / qz, cy - qy * focal / qz
   LCOL[n] = col
-end
-
--- Screen y of an elevation (radians), off the screen beyond the poles.
-local function elevY(e)
-  e = e - camPitch
-  if e >= pi * 0.49 then return -1 end
-  if e <= -pi * 0.49 then return scrH + 1 end
-  return cy - focal * tan(e)
 end
 
 -- A ring of silhouette points between the horizon and its elevations.
@@ -355,34 +390,37 @@ local function silhouette(r, col)
   end
 end
 
+-- A tree: a round crown (a sphere, which projects to a circle at any view)
+-- on a rectangular trunk. The lcd fills circles about 2.5 times and
+-- rectangles about 4 times as fast as triangles (rallybench P06/P07/P11).
+-- The trunk does not lean with the perspective; it is thin and short.
+local CROWN_R, TRUNK_W = 0.85, 0.12   -- crown radius and trunk width per tree width
 local function tree(t)
   local x, y, h, w = t[1], t[2], t[3], t[4]
-  local bx, by, bz = toCam(x, y, 0)
+  -- The foot in camera coordinates; a point above it is that height along
+  -- the camera's view of the world up axis (the right axis has no z part).
+  local dx, dy = x - EYE_X, y - EYE_Y
+  local bz = dx * cFx + dy * cFy - EYE_Z * cFz
   if bz < 2 then return end
-  if abs(bx) > kx * bz + w then return end
-  local tx, ty, tz = toCam(x, y, h)
+  local bx = dx * cRx + dy * cRy
+  local lim = kx * bz + w
+  if bx > lim or -bx > lim then return end
+  local r = w * CROWN_R
+  local hc = h - r                      -- height of the crown centre
+  local cz = bz + hc * cFz
+  if cz < 2 then return end
+  local by = dx * cUx + dy * cUy - EYE_Z * cUz
   local f = focal
   local sbx, sby = cx + bx * f / bz, cy - by * f / bz
-  local stx, sty = cx + tx * f / tz, cy - ty * f / tz
-  local hw = w * 0.5 * f / bz
-  if detail == 1 then
-    tri(sbx - hw, sby, sbx + hw, sby, stx, sty, C.pine[t[5]])
-    return
-  end
-  local dx, dy = stx - sbx, sty - sby
-  -- Trunk.
-  local tw = max(1, hw * 0.14)
-  local t1x, t1y = sbx + dx * 0.3, sby + dy * 0.3
-  tri(sbx - tw, sby, sbx + tw, sby, t1x + tw, t1y, C.trunk)
-  tri(sbx - tw, sby, t1x + tw, t1y, t1x - tw, t1y, C.trunk)
-  -- Two canopy tiers.
-  local col = C.pine[t[5]]
-  local ax, ay = sbx + dx * 0.18, sby + dy * 0.18
-  local mx, my = sbx + dx * 0.78, sby + dy * 0.78
-  tri(ax - hw, ay, ax + hw, ay, mx, my, col)
-  local bx2, by2 = sbx + dx * 0.48, sby + dy * 0.48
-  local hw2 = hw * 0.72
-  tri(bx2 - hw2, by2, bx2 + hw2, by2, stx, sty, col)
+  local scx, scy = cx + bx * f / cz, cy - (by + hc * cUz) * f / cz
+  local n = treeCount + 1
+  treeCount = n
+  RX[n], RY[n], RR[n], RCOL[n] = scx // 1, scy // 1, (r * f / cz) // 1 + 1, C.crown[t[5]]
+  -- Trunk from the foot up to the crown centre, centred between the two.
+  local tw = (w * TRUNK_W * f / bz) // 1
+  if tw < 1 then tw = 1 end
+  local top = scy // 1
+  KX[n], KY[n], KW[n], KH[n] = ((sbx + scx) * 0.5 - tw * 0.5) // 1, top, tw, sby // 1 - top
 end
 
 ---------------------------------------------------------------------------
@@ -403,11 +441,17 @@ end
 local fa31, fa32, fa33 = 0, 0, 1
 local emx_, emy_, emz_, lmx_, lmy_, lmz_ = 0, 0, 0, 0, 0, 1
 local facesPending = false
+-- Per face: its material's shade levels, or false for the translucent
+-- disc (one lookup instead of the material, the disc test and the shade
+-- table). Rebuilt after render.dirty() (a new mesh).
+local FSH = {}
+local FSB = {}                       -- the same for the underside (FBACK), or false
+local fshStale = true
 local faceLimit = 0                  -- faces in the model drawn this frame
 local allInFront = true              -- no vertex behind the camera this frame
 local LOD_PX = 35                    -- half span on screen below which the low detail model is used
 local LOD_PX_LOW = 60                -- the same at low detail
-local WEAK_DIST = 25                 -- metres beyond which one scale serves the whole model
+local WEAK_DIST = 15                 -- metres beyond which one scale serves the whole model
 
 local function modelFrame(h)
   modelMode = 0
@@ -451,6 +495,7 @@ local function modelFrame(h)
   if radiusPx < (detail == 2 and LOD_PX or LOD_PX_LOW) then nv, faceLimit = model.coreVertices, model.coreFaces end
 
   local MX, MY, MZ = model.MX, model.MY, model.MZ
+  local SX, SY = SX, SY
   local ccx, ccy = cx, cy
   allInFront = true
   if t3 > WEAK_DIST then
@@ -499,14 +544,23 @@ local function modelFaces()
   facesPending = false
   local a31, a32, a33 = fa31, fa32, fa33
   local emx, emy, emz, lmx, lmy, lmz = emx_, emy_, emz_, lmx_, lmy_, lmz_
-  local FA, FB, FC, FD, FMAT, FTWO = model.FA, model.FB, model.FC, model.FD, model.FMAT, model.FTWO
-  local FBACK = model.FBACK
+  local FA, FB, FC, FD, FTWO = model.FA, model.FB, model.FC, model.FD, model.FTWO
   local FNX, FNY, FNZ, FPD = model.FNX, model.FNY, model.FNZ, model.FPD
   local FCX, FCY, FCZ = model.FCX, model.FCY, model.FCZ
-  local MAT_DISC = model.MAT_DISC
+  if fshStale then
+    fshStale = false
+    local FMAT, FBACK, MAT_DISC = model.FMAT, model.FBACK, model.MAT_DISC
+    for i = 1, model.faceCount do
+      local m, b = FMAT[i], FBACK[i]
+      FSH[i] = m ~= MAT_DISC and SHADES[m]
+      FSB[i] = b and SHADES[b]
+    end
+    for i = model.faceCount + 1, #FSH do FSH[i], FSB[i] = nil, nil end
+  end
   local discCol = C.disc
   local levels = SHADE_LEVELS - 1
   local inFront = allInFront
+  local SX, KEY, FCOL, FSH, KF = SX, KEY, FCOL, FSH, KEY_FACES
   local n = 0
   for i = 1, faceLimit do
     local nx, ny, nz = FNX[i], FNY[i], FNZ[i]
@@ -514,22 +568,25 @@ local function modelFaces()
     if facing > 0 or FTWO[i] then
       local d = FD[i]
       if inFront or (SX[FA[i]] and SX[FB[i]] and SX[FC[i]] and (d == 0 or SX[d])) then
-        local mat = FMAT[i]
+        local sh = FSH[i]
         -- Seen from below, a wing or tailplane shows its underside.
-        if facing < 0 and FBACK[i] then mat = FBACK[i] end
-        if mat == MAT_DISC then
-          FCOL[i] = discCol
-        else
+        if facing < 0 then
+          local b = FSB[i]
+          if b then sh = b end
+        end
+        if sh then
           local lam = nx * lmx + ny * lmy + nz * lmz
           if facing < 0 then lam = -lam end
           if lam < 0 then lam = 0 end
-          FCOL[i] = SHADES[mat][(lam * levels + 1.5) // 1]
+          FCOL[i] = sh[(lam * levels + 1.5) // 1]
+        else
+          FCOL[i] = discCol
         end
         -- Far to near: a larger depth gives a smaller key. The face index
         -- rides in the low bits so a plain numeric sort (no Lua
         -- comparator) does the ordering.
         n = n + 1
-        KEY[n] = ((8 - (FCX[i] * a31 + FCY[i] * a32 + FCZ[i] * a33)) * 4096) // 1 * KEY_FACES + i
+        KEY[n] = ((8 - (FCX[i] * a31 + FCY[i] * a32 + FCZ[i] * a33)) * 4096) // 1 * KF + i
       end
     end
   end
@@ -590,27 +647,27 @@ end
 -- What the last frame was built from: when nothing has moved (the
 -- plane sitting on the runway, the camera settled) the lists are kept.
 local lastPX, lastPY, lastPZ, lastR11, lastR21, lastR13, lastR23, lastR33
-local lastYaw, lastPitch, lastZoom, lastW, lastH, lastKey
+local lastYaw, lastPitch, lastZoom, lastW, lastH, lastTop, lastKey
 local EPS = 1e-4
 
-local function unchanged(h, w, hgt, key)
-  return w == lastW and hgt == lastH and key == lastKey
+local function unchanged(h, top, w, hgt, key)
+  return w == lastW and hgt == lastH and top == lastTop and key == lastKey
     and abs(h.px - lastPX) < EPS and abs(h.py - lastPY) < EPS and abs(h.pz - lastPZ) < EPS
     and abs(h.r11 - lastR11) < EPS and abs(h.r21 - lastR21) < EPS and abs(h.r13 - lastR13) < EPS
     and abs(h.r23 - lastR23) < EPS and abs(h.r33 - lastR33) < EPS
     and abs(camYaw - lastYaw) < EPS and abs(camPitch - lastPitch) < EPS and abs(zoom - lastZoom) < EPS
 end
 
--- Build the frame's display lists for a w x h window. animKey changes
--- whenever the model's moving parts do. Returns false (and keeps the last
--- lists) when nothing has moved since the last frame.
-function render.frame(h, w, hgt, animKey)
-  if lastW and unchanged(h, w, hgt, animKey) then return false end
+-- Build the frame's display lists for a w x hgt scene whose top row is
+-- top. animKey changes whenever the model's moving parts do. Returns false
+-- (and keeps the last lists) when nothing has moved since the last frame.
+function render.frame(h, top, w, hgt, animKey)
+  if lastW and unchanged(h, top, w, hgt, animKey) then return false end
   lastPX, lastPY, lastPZ = h.px, h.py, h.pz
   lastR11, lastR21, lastR13, lastR23, lastR33 = h.r11, h.r21, h.r13, h.r23, h.r33
-  lastYaw, lastPitch, lastZoom, lastW, lastH, lastKey = camYaw, camPitch, zoom, w, hgt, animKey
-  scrW, scrH = w, hgt
-  cx, cy = floor(w * 0.5), floor(hgt * 0.5)
+  lastYaw, lastPitch, lastZoom, lastW, lastH, lastTop, lastKey = camYaw, camPitch, zoom, w, hgt, top, animKey
+  scrW, scrH, scrTop = w, hgt, top
+  cx, cy = floor(w * 0.5), top + floor(hgt * 0.5)
   focal = (w * 0.5) / tan(HFOV * 0.5) * zoom
   kx = (w * 0.5 + 8) / focal
   ky = (hgt * 0.5 + 8) / focal
@@ -621,16 +678,28 @@ function render.frame(h, w, hgt, animKey)
   cRx, cRy = cyw, -sy
   cUx, cUy, cUz = -sp * sy, -sp * cyw, cp
 
-  -- Sky and ground bands, by elevation.
-  bandCount = 0
+  -- Sky and ground bands, by elevation: the screen y of each edge (off the
+  -- scene beyond the poles), and the band below it clamped to the scene.
+  -- elevY() and band() written out.
   local bl = BANDS[detail]
   local R, BC = bl.R, bl.C
-  local yPrev = elevY(R[1])
-  for i = 1, #BC do
-    local y = elevY(R[i + 1])
-    band(yPrev, y, BC[i])
+  local lim, f, ccy, st, sb = pi * 0.49, focal, cy, top, top + hgt
+  local nb, yPrev = 0, nil
+  for i = 1, #BC + 1 do
+    local e = R[i] - camPitch
+    local y
+    if e >= lim then y = st - 1 elseif e <= -lim then y = sb + 1 else y = ccy - f * tan(e) end
+    if yPrev and y > st and yPrev < sb and y > yPrev then
+      local y0, y1 = yPrev, y
+      if y0 < st then y0 = st end
+      if y1 > sb then y1 = sb end
+      y0 = y0 // 1
+      nb = nb + 1
+      BY[nb], BH[nb], BCOL[nb] = y0, y1 // 1 - y0 + 1, BC[i - 1]
+    end
     yPrev = y
   end
+  bandCount = nb
 
   -- Ground layer.
   triCount, lineCount = 0, 0
@@ -655,12 +724,13 @@ function render.frame(h, w, hgt, animKey)
       groundEllipse(h.px, h.py, nx, ny, 0.62, 0.75, 4, C.shadow)
     end
   end
-  triGround = triCount
 
   -- Field markings.
-  local lc = C.line
-  line(STRIP_X0, STRIP_Y0, 0, STRIP_X1, STRIP_Y0, 0, lc)
-  line(STRIP_X0, STRIP_Y1, 0, STRIP_X1, STRIP_Y1, 0, lc)
+  if detail == 2 then
+    local lc = C.line
+    line(STRIP_X0, STRIP_Y0, 0, STRIP_X1, STRIP_Y0, 0, lc)
+    line(STRIP_X0, STRIP_Y1, 0, STRIP_X1, STRIP_Y1, 0, lc)
+  end
   -- Runway centre line, dashed.
   local mid = (RUNWAY_Y0 + RUNWAY_Y1) * 0.5
   for x = RUNWAY_X0 + 4, RUNWAY_X1 - 8, 12 do
@@ -669,12 +739,12 @@ function render.frame(h, w, hgt, animKey)
 
   -- Trees, far to near, split around the plane.
   local hd = sqrt(h.px * h.px + h.py * h.py)
-  triFar = -1
+  treeCount, treeFar = 0, -1
   for i = 1, #TREES do
-    if triFar < 0 and TREE_DIST[i] < hd then triFar = triCount end
+    if treeFar < 0 and TREE_DIST[i] < hd then treeFar = treeCount end
     tree(TREES[i])
   end
-  if triFar < 0 then triFar = triCount end
+  if treeFar < 0 then treeFar = treeCount end
 
   modelFrame(h)
   if facesPending then modelFaces() end
@@ -685,6 +755,7 @@ end
 -- changed).
 function render.dirty()
   lastW = nil
+  fshStale = true
 end
 
 -- Detail level: 1 low (default), 2 high.
@@ -695,38 +766,61 @@ end
 
 local function drawTris(from, to)
   local last
-  local dtri = lcd.drawFilledTriangle
+  local dtri, color = lcd.drawFilledTriangle, lcd.color
+  local X1, Y1, X2, Y2, X3, Y3, CO = TX1, TY1, TX2, TY2, TX3, TY3, TCOL
   for i = from, to do
-    local col = TCOL[i]
-    if col ~= last then lcd.color(col); last = col end
-    dtri(TX1[i], TY1[i], TX2[i], TY2[i], TX3[i], TY3[i])
+    local col = CO[i]
+    if col ~= last then color(col); last = col end
+    dtri(X1[i], Y1[i], X2[i], Y2[i], X3[i], Y3[i])
   end
 end
 
+local function drawTrees(from, to)
+  if from > to then return end
+  local rect, circle, color = lcd.drawFilledRectangle, lcd.drawFilledCircle, lcd.color
+  local trunk = C.trunk
+  local KX, KY, KW, KH, RX, RY, RR, RCOL = KX, KY, KW, KH, RX, RY, RR, RCOL
+  for i = from, to do
+    local kh = KH[i]
+    if kh > 0 then
+      color(trunk)
+      rect(KX[i], KY[i], KW[i], kh)
+    end
+    color(RCOL[i])
+    circle(RX[i], RY[i], RR[i])
+  end
+end
+
+-- Draw the scene, clipped to it (the plane is not clipped to the
+-- view), into a w x h window.
 function render.paint(w, h)
-  local rect = lcd.drawFilledRectangle
+  lcd.setClipping(0, scrTop, w, scrH)
+  local rect, color = lcd.drawFilledRectangle, lcd.color
+  local BY, BH, BCOL = BY, BH, BCOL
   for i = 1, bandCount do
-    lcd.color(BCOL[i])
+    color(BCOL[i])
     rect(0, BY[i], w, BH[i])
   end
-  drawTris(1, triGround)
+  drawTris(1, triCount)
   local dline = lcd.drawLine
   local last
+  local LX1, LY1, LX2, LY2, LCOL = LX1, LY1, LX2, LY2, LCOL
   for i = 1, lineCount do
     local col = LCOL[i]
-    if col ~= last then lcd.color(col); last = col end
+    if col ~= last then color(col); last = col end
     dline(LX1[i], LY1[i], LX2[i], LY2[i])
   end
-  drawTris(triGround + 1, triFar)
+  drawTrees(1, treeFar)
 
   if modelMode == 2 then
     local FA, FB, FC, FD = model.FA, model.FB, model.FC, model.FD
     local dtri = lcd.drawFilledTriangle
+    local SX, SY, KEY, FCOL, KF = SX, SY, KEY, FCOL, KEY_FACES
     last = nil
     for k = 1, keyCount do
-      local i = KEY[k] % KEY_FACES
+      local i = KEY[k] % KF
       local col = FCOL[i]
-      if col ~= last then lcd.color(col); last = col end
+      if col ~= last then color(col); last = col end
       local a, c = FA[i], FC[i]
       local ax, ay, cx3, cy3 = SX[a], SY[a], SX[c], SY[c]
       local b = FB[i]
@@ -739,7 +833,8 @@ function render.paint(w, h)
     lcd.drawFilledCircle(dotX, dotY, dotR)
   end
 
-  drawTris(triFar + 1, triCount)
+  drawTrees(treeFar + 1, treeCount)
+  lcd.setClipping(0, 0, w, h)
 end
 
 -- Where the plane is on screen (for an off-screen arrow), and whether
