@@ -19,6 +19,10 @@ local sim = {}
 local STEP = 0.02                -- physics step (s)
 local MAX_STEPS = 5              -- per wakeup; a longer gap slows time instead
 local RANGE_LIMIT = 300          -- metres from the pilot
+-- The HUD text sits on opaque bars above (and, with the stats, below) the
+-- scene, so it needs no shadow and is only drawn every other frame:
+-- between, only the scene is invalidated and Ethos keeps the bars.
+local BAR_H, STATS_H = 22, 40
 local TOO_CLOSE = 1.5
 
 -- Analog sources: the sticks by function, as Ethos numbers them.
@@ -164,21 +168,32 @@ local function resetPlane(state)
   render.dirty()
 end
 
+local function formatHud(state)
+  if not state.hudLeftDirty then return end
+  state.hudLeftDirty = false
+  state.hudLeft = string.format("ALT %.1fm  SPD %.1fm/s  THR %d%%",
+    state.hudAlt / 10, state.hudSpd / 10, floor(state.hudThr))
+end
+
 local function setFont(f)
   if f then lcd.font(f) end
 end
 
--- HUD strings, rebuilt only when what they show changes. Returns true when
--- any of them changed (the screen needs a repaint).
+-- HUD strings, rebuilt only when what they show changes. Returns whether
+-- the bar texts changed and whether the centre message (drawn over the
+-- scene) changed. The flight data line changes nearly every frame in
+-- flight, so it is only formatted when the bar is drawn (formatHud).
 local function updateHud(state)
   local h = state.h
   local changed = false
-  local alt = floor(max(0, h.pz - 0.22) * 10 + 0.5)
-  local spd = floor(h.airspeed * 10 + 0.5)
-  local thr = floor(h.thr * 100 + 0.5)
+  local up = h.pz - 0.22
+  if up < 0 then up = 0 end
+  local alt = (up * 10 + 0.5) // 1
+  local spd = (h.airspeed * 10 + 0.5) // 1
+  local thr = (h.thr * 100 + 0.5) // 1
   if alt ~= state.hudAlt or spd ~= state.hudSpd or thr ~= state.hudThr then
     state.hudAlt, state.hudSpd, state.hudThr = alt, spd, thr
-    state.hudLeft = string.format("ALT %.1fm  SPD %.1fm/s  THR %d%%", alt / 10, spd / 10, thr)
+    state.hudLeftDirty = true
     changed = true
   end
   local secs = floor(state.flightTime)
@@ -204,9 +219,9 @@ local function updateHud(state)
     else
       state.message, state.subMessage = nil, nil
     end
-    changed = true
+    return changed, true
   end
-  return changed
+  return changed, false
 end
 
 ---------------------------------------------------------------------------
@@ -217,6 +232,7 @@ local function closeSettings(state)
   state.settingsOpen = false
   pcall(form.clear)
   state.lastTime = nil
+  state.paintScene, state.paintBar = true, true
   lcd.invalidate()
 end
 
@@ -278,6 +294,7 @@ function sim.create()
   local state = {
     cfg = loadConfig(),
     h = {},
+    view = {},           -- the plane as drawn (position and attitude)
     inp = {roll = 0, pitch = 0, yaw = 0, thr = 0, rollRate = 0, pitchRate = 0, yawRate = 0,
       response = 14, level = false},
     phase = "boot",
@@ -285,6 +302,12 @@ function sim.create()
     acc = 0,
     flightTime = 0,
     nextAwake = 0,
+    -- Stats: counters for the current second, and the last second's values.
+    wakes = 0, paints = 0, tickSum = 0, paintSum = 0, rateAt = 0,
+    rate = 0, fps = 0, tickMs = 0, paintMs = 0,
+    -- What the next paint draws: the scene, the bars; barDirty: the bars
+    -- changed since they were last drawn.
+    paintScene = true, paintBar = true, barDirty = true, frameNo = 0,
     hudLeft = "", hudTime = "0:00", hudMode = "",
     srcRud = analogSource(MEMBER_RUD),
     srcEle = analogSource(MEMBER_ELE),
@@ -321,11 +344,25 @@ function sim.wakeup(state)
     return
   end
 
+  local cfg = state.cfg
+  if cfg.stats then
+    state.wakes = state.wakes + 1
+    if t >= state.rateAt then
+      -- Once a second: wakeups and paints per second, mean wakeup and
+      -- paint time (ms).
+      local wakes = state.wakes
+      state.rate, state.fps = wakes, state.paints
+      state.tickMs = state.tickSum * 1000 / wakes
+      state.paintMs = state.paints > 0 and state.paintSum * 1000 / state.paints or 0
+      state.wakes, state.paints, state.tickSum, state.paintSum = 0, 0, 0, 0
+      state.rateAt = t + 1
+    end
+  end
+
   local dt = state.lastTime and (t - state.lastTime) or 0
   state.lastTime = t
   if dt < 0 then dt = 0 elseif dt > MAX_STEPS * STEP then dt = MAX_STEPS * STEP end
 
-  local cfg = state.cfg
   local h, inp = state.h, state.inp
   local expo = cfg.expo / 100
   local thr = stick(state.srcThr)
@@ -349,11 +386,13 @@ function sim.wakeup(state)
   if state.phase ~= "crashed" then
     state.acc = state.acc + dt
     local n = 0
-    while state.acc >= STEP and n < MAX_STEPS do
-      physics.step(h, inp, STEP)
-      state.acc = state.acc - STEP
+    local acc = state.acc
+    while acc >= STEP and n < MAX_STEPS do
+      acc = acc - STEP
       n = n + 1
     end
+    state.acc = acc
+    physics.run(h, inp, STEP, n)
     if not h.landed then state.flightTime = state.flightTime + dt end
     local d2 = h.px * h.px + h.py * h.py
     if d2 > RANGE_LIMIT * RANGE_LIMIT then
@@ -373,19 +412,55 @@ function sim.wakeup(state)
   plane.animate(inp.roll, inp.pitch, inp.yaw, spinning)
   local animKey = inp.roll * 1e6 + inp.pitch * 1e3 + inp.yaw + (spinning and 0.5 or 0)
 
-  local w, hgt = lcd.getWindowSize()
-  render.track(h, cfg.autoZoom, state.manualZoom, dt)
-  local drew = render.frame(h, w, hgt, animKey)
-  local hudChanged = updateHud(state)
+  -- Draw the plane where it is now, not where the last physics step
+  -- left it: a frame holds a varying number of 20 ms steps (3 or 4 at
+  -- 13 fps), and drawing the stepped state made fast passes stutter. The
+  -- time not stepped yet (state.acc, under one step) is carried forward
+  -- with the velocity and the body rates, for the picture only.
+  local view, a = state.view, state.acc
+  view.px, view.py, view.pz = h.px + h.vx * a, h.py + h.vy * a, h.pz + h.vz * a
+  local wx, wy, wz = h.p * a, h.q * a, h.r * a
+  local r11, r12, r13 = h.r11, h.r12, h.r13
+  local r21, r22, r23 = h.r21, h.r22, h.r23
+  local r31, r32, r33 = h.r31, h.r32, h.r33
+  view.r11, view.r12, view.r13 = r11 + r12 * wz - r13 * wy, r12 - r11 * wz + r13 * wx, r13 + r11 * wy - r12 * wx
+  view.r21, view.r22, view.r23 = r21 + r22 * wz - r23 * wy, r22 - r21 * wz + r23 * wx, r23 + r21 * wy - r22 * wx
+  view.r31, view.r32, view.r33 = r31 + r32 * wz - r33 * wy, r32 - r31 * wz + r33 * wx, r33 + r31 * wy - r32 * wx
 
-  if cfg.stats then
-    state.wakes = (state.wakes or 0) + 1
-    if t >= (state.rateAt or 0) then
-      state.rate, state.wakes, state.rateAt = state.wakes, 0, t + 1
-    end
+  local w, wh = lcd.getWindowSize()
+  local sceneH = wh - BAR_H - (cfg.stats and STATS_H or 0)
+  render.track(view, cfg.autoZoom, state.manualZoom, dt)
+  local drew = render.frame(view, BAR_H, w, sceneH, animKey)
+  local barChanged, msgChanged = updateHud(state)
+  if barChanged or cfg.stats then state.barDirty = true end
+
+  -- Repaint only what changed: the scene, and the bars every other frame
+  -- (every frame when the scene is still). Both bars with a still scene
+  -- (the stats on the pad) repaint the whole window.
+  local scene = drew or msgChanged
+  local bar = false
+  if state.barDirty then
+    local n = state.frameNo + 1
+    state.frameNo = n
+    bar = not scene or n % 2 == 0
   end
-  -- Repaint only when the picture or the HUD changed.
-  if drew or hudChanged or cfg.stats then lcd.invalidate() end
+  if bar then
+    state.barDirty = false
+    if cfg.stats then scene = true end
+  end
+  if cfg.stats then state.tickSum = state.tickSum + (now() - t) end
+  if not (scene or bar) then return end
+  state.paintScene, state.paintBar = scene, bar
+  -- Invalidate rectangles only: a plain invalidate() makes Ethos clear the
+  -- window before the paint (measured on an X20: 1 fps at High detail, 2-3
+  -- at Low), and the scene repaints every pixel of its rectangle anyway.
+  if scene and bar then
+    lcd.invalidate(0, 0, w, wh)
+  elseif scene then
+    lcd.invalidate(0, BAR_H, w, sceneH)
+  else
+    lcd.invalidate(0, 0, w, BAR_H)
+  end
 end
 
 local function shadowText(x, y, text, flags)
@@ -405,31 +480,56 @@ function sim.paint(state)
     shadowText(w // 2, h // 2 - 12, "PlaneSim: loading", CENTERED)
     return
   end
-  render.paint(w, h)
+  local stats = state.cfg.stats
+  local t0 = stats and now()
+  -- A paint Ethos asked for by itself draws everything.
+  local scene, bar = state.paintScene, state.paintBar
+  if not (scene or bar) then scene, bar = true, true end
+  state.paintScene, state.paintBar = false, false
 
-  setFont(FONT_S)
-  shadowText(6, 4, state.hudLeft)
-  shadowText(w - 6, 4, state.hudTime, RIGHT)
-  shadowText(w - 6, h - 22, state.hudMode, RIGHT)
-  if state.cfg.stats then
-    -- Paint's instruction budget used (Ethos 26.1.3+, last frame), wakeups
-    -- per second, and what was drawn.
-    local tris, lines, faces = render.stats()
-    local inp = state.inp
-    shadowText(6, h - 22, string.format("paint %d%%  %dHz  tri %d  faces %d  mem %dk  R%+d E%+d T%+d A%+d",
-      state.cpuPaint or 0, state.rate or 0, tris, faces, floor(collectgarbage("count")),
-      floor(inp.yaw * 100), floor(inp.pitch * 100), floor((state.thr or 0) * 100), floor(inp.roll * 100)))
-  end
-  if state.message then
-    setFont(FONT_L)
-    shadowText(w // 2, floor(h * 0.18), state.message, CENTERED)
-    if state.subMessage then
-      setFont(FONT_S)
-      shadowText(w // 2, floor(h * 0.18) + 30, state.subMessage, CENTERED)
+  if scene then
+    render.paint(w, h)
+    if state.message then
+      local y = BAR_H + floor(h * 0.14)
+      setFont(FONT_L)
+      shadowText(w // 2, y, state.message, CENTERED)
+      if state.subMessage then
+        setFont(FONT_S)
+        shadowText(w // 2, y + 30, state.subMessage, CENTERED)
+      end
     end
   end
-  if state.cfg.stats and system.getInstructionsUsage then
-    state.cpuPaint = usage()
+
+  if bar then
+    lcd.color(BLACK)
+    lcd.drawFilledRectangle(0, 0, w, BAR_H)
+    setFont(FONT_S)
+    lcd.color(WHITE)
+    formatHud(state)
+    lcd.drawText(6, 2, state.hudLeft)
+    lcd.drawText(w // 2, 2, state.hudMode, CENTERED)
+    lcd.drawText(w - 6, 2, state.hudTime, RIGHT)
+    if stats then
+      -- Per second: paints (fps), wakeups, mean wakeup and paint time; the
+      -- paint's instruction budget (Ethos 26.1.3+, last frame).
+      local y = h - STATS_H
+      lcd.color(BLACK)
+      lcd.drawFilledRectangle(0, y, w, STATS_H)
+      lcd.color(WHITE)
+      local tris, lines, faces = render.stats()
+      local inp = state.inp
+      lcd.drawText(6, y + 1, string.format("fps %d  wake %d/s  tick %.1f ms  paint %.1f ms  budget %d%%",
+        state.fps, state.rate, state.tickMs, state.paintMs, state.cpuPaint or 0))
+      lcd.drawText(6, y + 20, string.format("tri %d  faces %d  mem %dk  R%+d E%+d T%+d A%+d",
+        tris, faces, floor(collectgarbage("count")),
+        floor(inp.yaw * 100), floor(inp.pitch * 100), floor((state.thr or 0) * 100), floor(inp.roll * 100)))
+    end
+  end
+
+  if stats then
+    if system.getInstructionsUsage then state.cpuPaint = usage() end
+    state.paints = state.paints + 1
+    state.paintSum = state.paintSum + (now() - t0)
   end
 end
 

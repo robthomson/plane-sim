@@ -73,6 +73,7 @@ lcd = {
   drawText = function(x, y, s, flags) rec({"text", colour, x, y, s, flags or 0}) end,
   font = function() end,
   invalidate = function() end,
+  setClipping = function() end,
   loadMask = function() return nil end,
   darkMode = function() return true end,
 }
